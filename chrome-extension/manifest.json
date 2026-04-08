@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "MapXtractor",
+  "version": "1.0.0",
+  "description": "JS/CSS dosyalarında source map tespit et, kaynak kodu çıkart ve indir. Inspired by mapxtractor by Anil Celik (@ccelikanil) — https://github.com/ccelikanil/mapxtractor",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "downloads"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  }
+}

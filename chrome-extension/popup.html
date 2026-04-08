@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <title>MapXtractor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 580px;
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 13px;
+    }
+
+    /* ── Header ─────────────────────────────────────────── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 11px 16px;
+      background: #161b22;
+      border-bottom: 1px solid #21262d;
+    }
+    .logo { display: flex; align-items: center; gap: 8px; }
+    .logo-icon { font-size: 19px; }
+    .logo-text { font-size: 15px; font-weight: 700; color: #58a6ff; letter-spacing: .4px; }
+    .logo-text span { color: #f85149; }
+
+    .btn-scan {
+      display: flex; align-items: center; gap: 5px;
+      padding: 5px 13px;
+      background: #238636; color: #fff;
+      border: none; border-radius: 6px;
+      font-size: 12px; font-weight: 600; cursor: pointer;
+      transition: background .15s;
+    }
+    .btn-scan:hover:not(:disabled) { background: #2ea043; }
+    .btn-scan:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── Stats bar ──────────────────────────────────────── */
+    .stats {
+      display: none;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 7px 14px;
+      background: #161b22;
+      border-bottom: 1px solid #21262d;
+      font-size: 11px; color: #8b949e;
+    }
+    .stats-item { display: flex; align-items: center; gap: 4px; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; }
+    .dot-total  { background: #58a6ff; }
+    .dot-found  { background: #3fb950; }
+    .dot-miss   { background: #f85149; }
+    .dot-src    { background: #d2a8ff; }
+    .stats-num  { font-weight: 700; color: #c9d1d9; }
+
+    .btn-dl-all {
+      margin-left: auto;
+      padding: 4px 10px;
+      background: #1f6feb; color: #fff;
+      border: none; border-radius: 5px;
+      font-size: 11px; font-weight: 600; cursor: pointer;
+      display: none; transition: background .15s;
+    }
+    .btn-dl-all:hover { background: #388bfd; }
+
+    /* ── State (empty / loading) ────────────────────────── */
+    .state-msg {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 40px 20px; gap: 10px; color: #484f58;
+    }
+    .state-msg .icon { font-size: 36px; }
+    .state-msg p { font-size: 12px; text-align: center; line-height: 1.6; }
+
+    .spinner {
+      width: 28px; height: 28px;
+      border: 3px solid #21262d; border-top-color: #58a6ff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Asset list ─────────────────────────────────────── */
+    #asset-list { max-height: 420px; overflow-y: auto; }
+    #asset-list::-webkit-scrollbar { width: 5px; }
+    #asset-list::-webkit-scrollbar-track { background: #0d1117; }
+    #asset-list::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+    /* asset row */
+    .asset-item {
+      display: flex; align-items: center; gap: 9px;
+      padding: 8px 12px;
+      border-bottom: 1px solid #161b22;
+      transition: background .1s;
+    }
+    .asset-item:hover { background: #161b22; }
+
+    .asset-badge {
+      flex-shrink: 0; width: 30px; text-align: center;
+      font-size: 10px; font-weight: 700;
+      padding: 2px 3px; border-radius: 4px; letter-spacing: .4px;
+    }
+    .badge-js  { background: #3b2f00; color: #e3b341; }
+    .badge-css { background: #0c2d6b; color: #79c0ff; }
+
+    .asset-info { flex: 1; overflow: hidden; }
+    .asset-name {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 12px; color: #c9d1d9;
+    }
+    .asset-name a { color: inherit; text-decoration: none; }
+    .asset-name a:hover { color: #58a6ff; text-decoration: underline; }
+    .asset-sub {
+      font-size: 10px; color: #484f58; margin-top: 1px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .asset-sub.found { color: #3fb950; }
+
+    .asset-status { flex-shrink: 0; font-size: 17px; width: 22px; text-align: center; }
+    .status-checking { font-size: 11px; color: #8b949e; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* action buttons next to each row */
+    .row-actions { display: flex; gap: 5px; flex-shrink: 0; }
+
+    .btn-sm {
+      padding: 3px 8px;
+      border: none; border-radius: 5px;
+      font-size: 11px; font-weight: 600; cursor: pointer;
+      transition: background .15s; display: none;
+    }
+    .btn-sm.visible { display: inline-block; }
+
+    .btn-map  { background: #1f6feb; color: #fff; }
+    .btn-map:hover  { background: #388bfd; }
+
+    .btn-extract { background: #6e40c9; color: #fff; }
+    .btn-extract:hover { background: #8957e5; }
+    .btn-extract.open { background: #3d1f8a; }
+
+    /* ── Source panel (collapsible) ──────────────────────── */
+    .source-panel {
+      display: none;
+      background: #0d1117;
+      border-bottom: 1px solid #21262d;
+      border-left: 3px solid #6e40c9;
+      margin-left: 0;
+    }
+    .source-panel.open { display: block; }
+
+    .source-panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 14px 6px 12px;
+      background: #161b22;
+      border-bottom: 1px solid #21262d;
+      font-size: 11px; color: #8b949e;
+    }
+    .source-panel-title { font-weight: 600; color: #d2a8ff; }
+
+    .btn-zip {
+      padding: 3px 9px;
+      background: #6e40c9; color: #fff;
+      border: none; border-radius: 5px;
+      font-size: 11px; font-weight: 600; cursor: pointer;
+      transition: background .15s;
+    }
+    .btn-zip:hover { background: #8957e5; }
+
+    .source-file-list { max-height: 180px; overflow-y: auto; }
+    .source-file-list::-webkit-scrollbar { width: 4px; }
+    .source-file-list::-webkit-scrollbar-thumb { background: #30363d; }
+
+    .source-file-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px 12px;
+      border-bottom: 1px solid #161b22;
+      font-size: 11px;
+    }
+    .source-file-item:last-child { border-bottom: none; }
+    .source-file-item:hover { background: #161b22; }
+
+    .src-icon { flex-shrink: 0; font-size: 12px; }
+    .src-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c9d1d9; }
+    .src-size { flex-shrink: 0; color: #484f58; font-size: 10px; min-width: 40px; text-align: right; }
+    .src-nocontent { color: #484f58; font-style: italic; }
+
+    .btn-src-dl {
+      flex-shrink: 0;
+      padding: 2px 6px;
+      background: #21262d; color: #8b949e;
+      border: none; border-radius: 4px;
+      font-size: 10px; cursor: pointer;
+      transition: background .1s;
+    }
+    .btn-src-dl:hover { background: #30363d; color: #c9d1d9; }
+    .btn-src-dl:disabled { opacity: .35; cursor: not-allowed; }
+
+    /* ── Footer ──────────────────────────────────────────── */
+    .footer {
+      padding: 5px 14px;
+      background: #161b22;
+      border-top: 1px solid #21262d;
+      font-size: 10px; color: #484f58; text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">
+    <span class="logo-icon">🗺️</span>
+    <span class="logo-text">Map<span>X</span>tractor</span>
+  </div>
+  <button class="btn-scan" id="btn-scan">🔍 Tara</button>
+</div>
+
+<div class="stats" id="stats">
+  <span class="stats-item"><span class="dot dot-total"></span>Toplam: <span class="stats-num" id="cnt-total">0</span></span>
+  <span class="stats-item"><span class="dot dot-found"></span>Map: <span class="stats-num" id="cnt-found">0</span></span>
+  <span class="stats-item"><span class="dot dot-miss"></span>Yok: <span class="stats-num" id="cnt-miss">0</span></span>
+  <span class="stats-item"><span class="dot dot-src"></span>Kaynak: <span class="stats-num" id="cnt-src">0</span></span>
+  <button class="btn-dl-all" id="btn-dl-all">⬇ Map'leri İndir</button>
+</div>
+
+<div id="state-area">
+  <div class="state-msg">
+    <span class="icon">🗺️</span>
+    <p>JS ve CSS dosyalarındaki source map'leri<br>tespit etmek ve kaynak kodu çıkartmak için<br><strong>Tara</strong> butonuna bas.</p>
+  </div>
+</div>
+
+<div id="asset-list" style="display:none;"></div>
+
+<div class="footer">
+  MapXtractor — CTF &amp; Security Research Tool &nbsp;|&nbsp;
+  Inspired by <a href="https://github.com/ccelikanil/mapxtractor" target="_blank"
+    style="color:#58a6ff;text-decoration:none;">mapxtractor</a>
+  by <strong style="color:#c9d1d9;">Anıl Çelik</strong> 🙏
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
