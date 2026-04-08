@@ -14,15 +14,17 @@ const btnScan  = document.getElementById('btn-scan');
 const statsBar = document.getElementById('stats');
 const stateArea = document.getElementById('state-area');
 const assetList = document.getElementById('asset-list');
-const btnDlAll  = document.getElementById('btn-dl-all');
+const btnDlAll       = document.getElementById('btn-dl-all');
+const btnDlExtracted = document.getElementById('btn-dl-extracted');
 const cntTotal  = document.getElementById('cnt-total');
 const cntFound  = document.getElementById('cnt-found');
 const cntMiss   = document.getElementById('cnt-miss');
 const cntSrc    = document.getElementById('cnt-src');
 
 // ── Global state ──────────────────────────────────────────────────────────────
-let foundMaps = [];   // { assetUrl, mapUrl }
-let totalSources = 0; // total extracted source files across all maps
+let foundMaps = [];        // { assetUrl, mapUrl }
+let totalSources = 0;      // extracted source files with content (across all maps)
+let allSources = [];       // { path, content } — for "download all" ZIP
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  ENTRY POINT
@@ -34,6 +36,7 @@ async function startScan() {
   btnScan.textContent = '⏳ Tarıyor…';
   foundMaps = [];
   totalSources = 0;
+  allSources = [];
 
   showLoading();
   statsBar.style.display = 'none';
@@ -65,10 +68,6 @@ async function startScan() {
       if (!detection.hasMap) {
         miss++;
         setRowMissing(rowEl, detection.error);
-        updateStats(assets.length, found, ++miss - 1, totalSources);
-        // re-correct
-        miss--;
-        miss++;
         updateStats(assets.length, found, miss, totalSources);
         return;
       }
@@ -77,14 +76,21 @@ async function startScan() {
       foundMaps.push({ assetUrl: asset.url, mapUrl: detection.mapUrl });
       setRowFound(rowEl, asset, detection.mapUrl);
       updateStats(assets.length, found, miss, totalSources);
-      if (foundMaps.length > 0) document.getElementById('btn-dl-all').style.display = 'inline-block';
+      btnDlAll.style.display = 'inline-block';
 
-      // Step 2 – fetch & parse full map (async, non-blocking)
-      const parsed = await fetchAndParseMap(detection.mapUrl);
+      // Step 2 – show extract button in loading state, then parse full map
+      setExtractLoading(rowEl);
+      const { parsed, error: parseError } = await fetchAndParseMap(detection.mapUrl);
+
       if (parsed) {
-        totalSources += parsed.sources.length;
+        const withContent = parsed.sources.filter(s => s.content !== null);
+        totalSources += withContent.length;
+        allSources.push(...withContent);
         updateStats(assets.length, found, miss, totalSources);
         attachSourcePanel(rowEl, panelEl, asset, detection.mapUrl, parsed);
+        if (allSources.length > 0) btnDlExtracted.style.display = 'inline-block';
+      } else {
+        setExtractFailed(rowEl, parseError);
       }
     }));
 
@@ -172,39 +178,67 @@ async function checkSourceMap(asset) {
 //  FULL MAP PARSE  – fetch JSON, validate, extract sources
 // ══════════════════════════════════════════════════════════════════════════════
 async function fetchAndParseMap(mapUrl) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
   try {
-    const resp = await fetch(mapUrl, { cache: 'no-store' });
-    if (!resp.ok) return null;
+    const resp = await fetch(mapUrl, { cache: 'no-store', signal: controller.signal });
+    clearTimeout(timer);
+
+    if (!resp.ok) return { parsed: null, error: `Sunucu hatası: HTTP ${resp.status}` };
 
     const ct = resp.headers.get('Content-Type') || '';
-    if (ct.includes('text/html') || ct.includes('image/')) return null;
+    if (ct.includes('text/html'))  return { parsed: null, error: 'Sunucu HTML döndürdü (map değil)' };
+    if (ct.includes('image/'))     return { parsed: null, error: 'Sunucu görüntü döndürdü' };
 
-    const data = await resp.json();
-    if (!isValidSourceMap(data)) return null;
+    let data;
+    try {
+      data = await resp.json();
+    } catch {
+      return { parsed: null, error: 'JSON parse hatası — map bozuk veya sıkıştırılmış olabilir' };
+    }
 
-    const rawSources  = data.sources  || [];
-    const rawContents = data.sourcesContent || [];
+    if (!isValidSourceMap(data)) {
+      const why = diagnoseInvalidMap(data);
+      return { parsed: null, error: `Geçersiz source map: ${why}` };
+    }
 
-    const sources = rawSources.map((src, i) => ({
-      path:    sanitizeSourcePath(src),
-      raw:     src,
-      content: rawContents[i] ?? null,   // null = not embedded
-      size:    rawContents[i] != null ? new TextEncoder().encode(rawContents[i]).length : 0
-    }));
+    const rawSources  = data.sources || [];
+    const rawContents = data.sourcesContent;       // may be undefined/null
+    const hasContent  = Array.isArray(rawContents);
 
-    return { sources, totalFiles: sources.length };
-  } catch {
-    return null;
+    const sources = rawSources.map((src, i) => {
+      const content = hasContent ? (rawContents[i] ?? null) : null;
+      return {
+        path:    sanitizeSourcePath(src),
+        raw:     src,
+        content,
+        size:    content !== null ? new TextEncoder().encode(content).length : 0
+      };
+    });
+
+    return { parsed: { sources, hasContent }, error: null };
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') return { parsed: null, error: 'Bağlantı zaman aşımı (20 s)' };
+    return { parsed: null, error: err.message };
   }
 }
 
 function isValidSourceMap(data) {
+  // Relaxed — only require version:3 and a non-empty sources array.
+  // mappings can be empty for index maps; sourcesContent is optional.
   return (
     typeof data === 'object' && data !== null &&
     data.version === 3 &&
-    typeof data.mappings === 'string' && data.mappings.length > 10 &&
     Array.isArray(data.sources) && data.sources.length > 0
   );
+}
+
+function diagnoseInvalidMap(data) {
+  if (typeof data !== 'object' || data === null) return 'JSON objesi değil';
+  if (data.version !== 3) return `version ${data.version} (sadece v3 desteklenir)`;
+  if (!Array.isArray(data.sources) || data.sources.length === 0) return 'sources dizisi boş';
+  return 'bilinmeyen format';
 }
 
 // ── Path sanitization (mirrors Python's sanitize_path) ────────────────────────
@@ -299,63 +333,107 @@ function setRowMissing(rowEl, errorMsg) {
   subEl.textContent = errorMsg || 'source map bulunamadı';
 }
 
+function setExtractLoading(rowEl) {
+  const btn = document.getElementById(`btn-ext-${rowEl.dataset.id}`);
+  btn.classList.add('visible');
+  btn.disabled = true;
+  btn.textContent = '⏳';
+  btn.title = 'Map içeriği analiz ediliyor…';
+}
+
+function setExtractFailed(rowEl, reason) {
+  const id   = rowEl.dataset.id;
+  const btn  = document.getElementById(`btn-ext-${id}`);
+  const subEl = document.getElementById(`sub-${id}`);
+
+  btn.disabled = true;
+  btn.textContent = '⚠️';
+  btn.title = reason || 'Çıkartılamadı';
+  btn.style.background = '#5a1d1d';
+
+  // Append reason to sub-text
+  subEl.textContent += ` — ⚠️ ${reason}`;
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  UI – SOURCE PANEL
 // ══════════════════════════════════════════════════════════════════════════════
-function attachSourcePanel(rowEl, panelEl, asset, mapUrl, { sources }) {
-  const id     = rowEl.dataset.id;
-  const extBtn = document.getElementById(`btn-ext-${id}`);
-
+function attachSourcePanel(rowEl, panelEl, asset, mapUrl, { sources, hasContent }) {
+  const id          = rowEl.dataset.id;
+  const extBtn      = document.getElementById(`btn-ext-${id}`);
   const withContent = sources.filter(s => s.content !== null);
-  const label = `${sources.length} kaynak` + (withContent.length < sources.length
-    ? ` (${withContent.length} içerikli)` : '');
+  const noContent   = !hasContent;   // server sent map without sourcesContent at all
 
-  // Build panel HTML
+  // ── Panel header label
+  let label;
+  if (noContent) {
+    label = `${sources.length} kaynak yolu (içerik gömülü değil)`;
+  } else if (withContent.length < sources.length) {
+    label = `${sources.length} kaynak · ${withContent.length} içerikli · ${sources.length - withContent.length} boş`;
+  } else {
+    label = `${sources.length} kaynak dosya`;
+  }
+
+  // ── ZIP button visibility
+  const zipDisabled = withContent.length === 0;
+
+  // ── Warning banner when sourcesContent absent
+  const warnBanner = noContent
+    ? `<div class="src-warn">
+         ℹ️ Bu map dosyasında <code>sourcesContent</code> yok — kaynak kod gömülmemiş.
+         Sadece dosya yolları listeleniyor.
+       </div>`
+    : '';
+
+  // ── File rows
   const fileRows = sources.map((s, i) => {
-    const hasContent = s.content !== null;
-    const sizeStr    = hasContent ? fmtBytes(s.size) : '—';
-    const ext        = fileExt(s.path);
-    const icon       = extIcon(ext);
+    const has     = s.content !== null;
+    const sizeStr = has ? fmtBytes(s.size) : '—';
     return `
       <div class="source-file-item">
-        <span class="src-icon">${icon}</span>
-        <span class="src-path ${hasContent ? '' : 'src-nocontent'}" title="${escHtml(s.raw)}">${escHtml(s.path)}</span>
+        <span class="src-icon">${extIcon(fileExt(s.path))}</span>
+        <span class="src-path ${has ? '' : 'src-nocontent'}" title="${escHtml(s.raw)}">${escHtml(s.path)}</span>
         <span class="src-size">${sizeStr}</span>
-        <button class="btn-src-dl" data-idx="${i}" ${hasContent ? '' : 'disabled'}>⬇</button>
+        <button class="btn-src-dl" data-idx="${i}" ${has ? '' : 'disabled'}>⬇</button>
       </div>`;
   }).join('');
 
   panelEl.innerHTML = `
     <div class="source-panel-header">
       <span class="source-panel-title">📂 ${escHtml(label)}</span>
-      <button class="btn-zip" id="btn-zip-${id}">⬇ ZIP indir</button>
+      <button class="btn-zip" id="btn-zip-${id}" ${zipDisabled ? 'disabled title="İndirilecek içerik yok"' : ''}>
+        ⬇ ZIP indir
+      </button>
     </div>
+    ${warnBanner}
     <div class="source-file-list" id="sfl-${id}">${fileRows}</div>`;
 
   // Individual file download
   document.getElementById(`sfl-${id}`).addEventListener('click', e => {
     const btn = e.target.closest('.btn-src-dl');
     if (!btn || btn.disabled) return;
-    const idx = parseInt(btn.dataset.idx, 10);
-    const src = sources[idx];
-    if (src.content !== null) downloadContent(src.path, src.content);
+    const src = sources[parseInt(btn.dataset.idx, 10)];
+    if (src?.content !== null) downloadContent(src.path, src.content);
   });
 
-  // ZIP download
+  // Per-asset ZIP download
   document.getElementById(`btn-zip-${id}`).addEventListener('click', () => {
+    if (zipDisabled) return;
     const zipName = assetFilename(asset.url).replace(/\.[^.]+$/, '') + '_sources.zip';
-    const files = withContent.map(s => ({ name: s.path, data: s.content }));
-    if (!files.length) return;
-    const zip = buildZip(files);
-    downloadBlobAs(zip, zipName, 'application/zip');
+    downloadBlobAs(buildZip(withContent.map(s => ({ name: s.path, data: s.content }))),
+      zipName, 'application/zip');
   });
 
-  // Toggle panel visibility
-  extBtn.classList.add('visible');
+  // Toggle open/close
+  extBtn.disabled = false;
+  extBtn.title = '';
+  extBtn.textContent = noContent ? '📋 Yollar' : '📦 Çıkart';
   extBtn.addEventListener('click', () => {
     const isOpen = panelEl.classList.toggle('open');
     extBtn.classList.toggle('open', isOpen);
-    extBtn.textContent = isOpen ? '📂 Kapat' : '📦 Çıkart';
+    extBtn.textContent = isOpen
+      ? '📂 Kapat'
+      : (noContent ? '📋 Yollar' : '📦 Çıkart');
   });
 }
 
@@ -522,6 +600,13 @@ function updateStats(total, found, miss, src) {
 // ── Download all raw map files ────────────────────────────────────────────────
 btnDlAll.addEventListener('click', () => {
   foundMaps.forEach(({ mapUrl }) => downloadUrl(mapUrl));
+});
+
+// ── Download ALL extracted sources as one mega-ZIP ────────────────────────────
+btnDlExtracted.addEventListener('click', () => {
+  if (!allSources.length) return;
+  const zip = buildZip(allSources.map(s => ({ name: s.path, data: s.content })));
+  downloadBlobAs(zip, 'all_sources.zip', 'application/zip');
 });
 
 // ══════════════════════════════════════════════════════════════════════════════

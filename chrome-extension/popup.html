@@ -200,6 +200,15 @@
     .btn-src-dl:hover { background: #30363d; color: #c9d1d9; }
     .btn-src-dl:disabled { opacity: .35; cursor: not-allowed; }
 
+    .src-warn {
+      padding: 6px 12px;
+      background: #1c1a00;
+      border-bottom: 1px solid #3d3800;
+      font-size: 11px;
+      color: #e3b341;
+    }
+    .src-warn code { font-family: monospace; background: #2d2900; padding: 1px 4px; border-radius: 3px; }
+
     /* ── Footer ──────────────────────────────────────────── */
     .footer {
       padding: 5px 14px;
@@ -225,6 +234,7 @@
   <span class="stats-item"><span class="dot dot-miss"></span>Yok: <span class="stats-num" id="cnt-miss">0</span></span>
   <span class="stats-item"><span class="dot dot-src"></span>Kaynak: <span class="stats-num" id="cnt-src">0</span></span>
   <button class="btn-dl-all" id="btn-dl-all">⬇ Map'leri İndir</button>
+  <button class="btn-dl-all" id="btn-dl-extracted" style="background:#6e40c9;">📦 Tümünü ZIP</button>
 </div>
 
 <div id="state-area">
