@@ -52,7 +52,7 @@ A Chrome extension for security researchers and bug bounty hunters. Scans every 
 
 1. Bu repoyu klonlayın veya `chrome-extension/` klasörünü indirin:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/mapxtractor.git
+   git clone https://github.com/Xelarmen/JSMapExtractorAddon
    cd mapxtractor/chrome-extension
    ```
 
